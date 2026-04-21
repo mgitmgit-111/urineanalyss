@@ -1,0 +1,109 @@
+<div id="mmd2" style="padding:8px 0"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '13px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    clusterBkg: dark ? '#1e293b' : '#f8fafc',
+    clusterBorder: dark ? '#475569' : '#94a3b8',
+    edgeLabelBackground: dark ? '#1e293b' : '#f8fafc',
+  },
+  flowchart: { curve: 'basis', padding: 18 }
+});
+
+const diagram = `flowchart TD
+
+subgraph group_hw["Hardware layer — optical enclosure"]
+  node_enclosure["Light-tight enclosure\\nfixed LED + geometry"]
+  node_cradle["Strip cradle\\n±0.5mm tolerance dock"]
+  node_sensor(("AS7265x / Hamamatsu\\n18-channel spectral sensor"))
+  node_thermistor["Thermistor\\ntemperature compensation"]
+  node_mcu["MCU / Raspberry Pi\\nsensor_reader.py"]
+end
+
+subgraph group_cal["Calibration layer — every power-on"]
+  node_dark["Dark current read\\nLED off + light trap"]
+  node_white["White tile reference\\nPTFE Spectralon"]
+  node_lot["Lot calibration\\nscan strip barcode"]
+  node_tempcomp["Temperature correction\\nlookup table"]
+end
+
+subgraph group_ingest["Django ingest — PostgreSQL backend"]
+  node_session["ReadingSession\\noperator + lot + sensor serial"]
+  node_rawstore["Raw channel store\\nimmutable audit record"]
+  node_norm["Normalize\\nraw ÷ white ref − dark"]
+end
+
+subgraph group_ml["ML analysis layer"]
+  node_ood["OOD detector\\nflag unknown spectra"]
+  node_classifier["Per-pad RF/SVM classifier\\ntrained on 2000+ samples per level"]
+  node_confidence["Confidence scorer\\nreject below threshold"]
+end
+
+subgraph group_output["Result layer"]
+  node_result["Structured result\\npad + level + confidence"]
+  node_inconclusive{{"Confidence\\nabove threshold?"}}
+  node_flag["Flag inconclusive\\nrepeat or refer"]
+  node_finalresult["Final clinical result\\nURO BIL KET BLD PRO NIT LEU GLU SG"]
+end
+
+subgraph group_reporting["Reporting + integration"]
+  node_lis["LIS export\\nHL7 / ASTM E1394"]
+  node_dashboard["Clinician dashboard\\nresults.html"]
+  node_audit["Audit log\\nimmutable + versioned"]
+end
+
+node_enclosure --> node_cradle
+node_cradle --> node_sensor
+node_thermistor --> node_tempcomp
+node_sensor -->|"raw ADC counts"| node_mcu
+node_mcu -->|"dark read"| node_dark
+node_mcu -->|"white read"| node_white
+node_mcu -->|"barcode scan"| node_lot
+node_dark --> node_tempcomp
+node_white --> node_tempcomp
+node_lot --> node_tempcomp
+node_tempcomp -->|"POST calibrated JSON"| node_session
+node_session --> node_rawstore
+node_rawstore --> node_norm
+node_norm --> node_ood
+node_ood -->|"known spectrum"| node_classifier
+node_ood -->|"unknown — reject"| node_flag
+node_classifier --> node_confidence
+node_confidence --> node_inconclusive
+node_inconclusive -->|"Yes"| node_result
+node_inconclusive -->|"No"| node_flag
+node_result --> node_finalresult
+node_finalresult --> node_lis
+node_finalresult --> node_dashboard
+node_rawstore --> node_audit
+node_session --> node_audit
+
+classDef hw fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef cal fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef ingest fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef ml fill:#fbeaf0,stroke:#993556,stroke-width:1.5px,color:#4b1528
+classDef out fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef rep fill:#f1efe8,stroke:#5f5e5a,stroke-width:1.5px,color:#2c2c2a
+classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d
+
+class node_enclosure,node_cradle,node_sensor,node_thermistor,node_mcu hw
+class node_dark,node_white,node_lot,node_tempcomp cal
+class node_session,node_rawstore,node_norm ingest
+class node_ood,node_classifier,node_confidence ml
+class node_result,node_inconclusive,node_finalresult out
+class node_lis,node_dashboard,node_audit rep
+class node_flag warn`;
+
+const { svg } = await mermaid.render('mmd2-svg', diagram);
+document.getElementById('mmd2').innerHTML = svg;
+</script>

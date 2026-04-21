@@ -1,0 +1,109 @@
+<div id="mmd3" style="padding:8px 0"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '13px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    clusterBkg: dark ? '#1e293b' : '#f8fafc',
+    clusterBorder: dark ? '#475569' : '#94a3b8',
+    edgeLabelBackground: dark ? '#1e293b' : '#f8fafc',
+  },
+  flowchart: { curve: 'basis', padding: 20 }
+});
+
+const diagram = `flowchart TD
+
+subgraph hw["Optical enclosure — Pi HAT"]
+  led["White LED ring\\n45deg incidence, CRI gt95\\nexternal drive, not AS7341 onboard"]
+  cradle["Strip cradle\\ntwo hard stops, spring loaded\\nlt0.3mm repeatability"]
+  ptfe["PTFE white tile\\npermanent in cradle\\nauto-reference slot"]
+  as7341(("AS7341\\n8ch 415–680nm\\n+ clear + NIR"))
+  therm["Thermistor\\nonboard temp read"]
+  pi["Raspberry Pi\\nsensor_reader.py\\nI2C @ 400kHz"]
+end
+
+subgraph cal["Power-on calibration sequence"]
+  dark["1. Dark current\\nLED off, read D[ch]"]
+  white["2. White tile read\\nLED on, read W[ch]"]
+  lotqr["3. Strip lot scan\\nQR barcode reader\\nload calibration.json"]
+  tempread["4. Temperature read\\napply correction factor"]
+end
+
+subgraph ingest["Django backend — PostgreSQL"]
+  session["ReadingSession\\noperator ID + lot + sensor SN\\ntimestamp + SW version"]
+  rawstore["Raw channel store\\nD[ch] W[ch] R[ch] T\\nimmutable — never updated"]
+  norm["Normalise\\nR[ch] - D[ch] / W[ch] - D[ch]\\n× temp correction"]
+end
+
+subgraph ml["ML analysis — per-pad RF classifier"]
+  ood["OOD check\\nMahalanobis distance\\nreject if outlier"]
+  clf["9 x Random Forest\\n8 normalised channels + T\\nNeg Trace 1+ 2+ 3+"]
+  prob["Class probability\\nper pad"]
+  thresh{{"All pads\\ngt 80% confidence?"}}
+end
+
+subgraph result["Result layer"]
+  pass_result["Clinical result\\nURO BIL KET BLD PRO\\nNIT LEU GLU — 8 pads\\nSG excluded from IU"]
+  flag["Inconclusive flag\\nrepeat strip or\\nrefer to lab"]
+end
+
+subgraph reporting["Output + compliance"]
+  display["Pi touchscreen\\nresults.html — Django served"]
+  audit["Audit log\\nimmutable, signed\\nIEC 62304 compliant"]
+  export["ASTM E1394 export\\nUSB or serial to LIS"]
+  cdsco["CDSCO submission\\nForm MD-3 dossier\\nISO 13485 + 14971 + IEC 62304"]
+end
+
+led --> cradle
+cradle --> ptfe
+ptfe --> as7341
+therm --> tempread
+as7341 -->|"I2C ADC counts"| pi
+pi --> dark
+dark --> white
+white --> lotqr
+lotqr --> tempread
+tempread -->|"POST calibrated JSON"| session
+session --> rawstore
+rawstore --> norm
+norm --> ood
+ood -->|"in distribution"| clf
+ood -->|"outlier — reject"| flag
+clf --> prob
+prob --> thresh
+thresh -->|"Yes — report"| pass_result
+thresh -->|"No — withhold"| flag
+pass_result --> display
+pass_result --> export
+rawstore --> audit
+session --> audit
+audit --> cdsco
+
+classDef hw fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef cal fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef ingest fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef ml fill:#fbeaf0,stroke:#993556,stroke-width:1.5px,color:#4b1528
+classDef result fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef rep fill:#f1efe8,stroke:#5f5e5a,stroke-width:1.5px,color:#2c2c2a
+classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d
+
+class led,cradle,ptfe,as7341,therm,pi hw
+class dark,white,lotqr,tempread cal
+class session,rawstore,norm ingest
+class ood,clf,prob,thresh ml
+class pass_result,flag result
+class display,audit,export,cdsco rep
+class flag warn`;
+
+const { svg } = await mermaid.render('mmd3-svg', diagram);
+document.getElementById('mmd3').innerHTML = svg;
+</script>
