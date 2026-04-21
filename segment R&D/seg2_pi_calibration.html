@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page-title { font-size: 13px; font-weight: bold; color: #1e293b; padding: 8px 12px 4px; border-bottom: 1.5px solid #334155; margin-bottom: 6px; }
+  .subtitle { font-size: 10px; color: #64748b; font-weight: normal; margin-left: 6px; }
+  #diagram svg { width: 100% !important; height: auto !important; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+<script type="module">
+import mermaid from "https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs";
+await document.fonts.ready;
+mermaid.initialize({ startOnLoad:false, theme:"base", fontFamily:"Arial,sans-serif", themeVariables:{ darkMode:false, fontSize:"12px", fontFamily:"Arial,sans-serif", lineColor:"#73726c", textColor:"#3d3d3a", clusterBkg:"#f8fafc", clusterBorder:"#94a3b8" }, flowchart:{ curve:"basis", padding:20, rankSpacing:52, nodeSpacing:32 } });
+const src = document.getElementById("src").innerText.trim();
+const {svg} = await mermaid.render("r2", src);
+document.getElementById("diagram").innerHTML = svg;
+</script>
+</head>
+<body>
+<div class="page-title">Urine Strip Analyser — Segment 2 of 5 <span class="subtitle">Raspberry Pi 4B — calibration pipeline and local services</span></div>
+<div id="diagram"></div>
+<pre id="src" style="display:none">
+flowchart TD
+
+subgraph PI["Segment 2 — Raspberry Pi 4B — calibration pipeline and local services"]
+  direction TB
+
+  subgraph CAL["sensor_reader.py — systemd service — auto-restart on crash"]
+    S1["Step 1 — Dark current\nLED off\nread D[ch x8] — baseline noise floor"]
+    S2["Step 2 — White tile reference\nLED on, PTFE tile in position\nread W[ch x8] — max reflectance"]
+    S3["Step 3 — Lot scan\nread QR barcode\nparse lot ID\nload matching lot_ref.json from disk"]
+    S4["Step 4 — Temperature read\nread NTC via MCP3008\nlookup temp correction factor\nfrom temp_curves.json"]
+    S5["Step 5 — Strip read\ninsert strip into cradle\nLED on — 3 consecutive reads\n500ms apart — average R[ch x8]"]
+    S6["Normalise per channel\n(R[ch] - D[ch]) / (W[ch] - D[ch])\nx T_factor\noutput norm[ch x8]"]
+    S7["Sign payload\nHMAC-SHA256\ndevice_id + timestamp + nonce\nload cert from /etc/device/cert.pem"]
+  end
+
+  subgraph LOCAL["Local Pi services"]
+    NETQ{"Network\nreachable?\nping AWS endpoint"}
+    OFFLINE["aiosqlite offline queue\nbuffer signed payloads\nauto-drain on reconnect\nno data loss on outage"]
+    LOCALAPI["Local FastAPI\n127.0.0.1:8001\nserves cached results\nto React UI"]
+    NGINX_PI["Nginx on Pi\nport 3000\nserves React build\nto HDMI monitor"]
+    REACT["React + Vite UI\nHDMI monitor display\noperator workflow\npatient registration form\nreal-time result view"]
+    WATCHDOG["systemd watchdog\nhardware WDT via GPIO\nauto-reboot on hang\nmax 30s recovery"]
+    CERTS["/etc/device/\ncert.pem + key.pem\nper-device mTLS identity\nrotate every 90 days via cron"]
+  end
+
+  S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+  S7 --> NETQ
+  NETQ -->|"offline — buffer"| OFFLINE
+  OFFLINE -->|"reconnected — drain queue"| NETQ
+  NETQ -->|"online — POST to AWS"| S7
+  S7 --> LOCALAPI
+  LOCALAPI --> NGINX_PI --> REACT
+  WATCHDOG -.->|"monitors process"| CAL
+  CERTS -.->|"loaded at startup"| S7
+end
+
+classDef cal fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef local fill:#fefce8,stroke:#ca8a04,stroke-width:1px,color:#713f12
+classDef decision fill:#fff7ed,stroke:#c2410c,stroke-width:1.5px,color:#7c2d12
+class S1,S2,S3,S4,S5,S6,S7 cal
+class OFFLINE,LOCALAPI,NGINX_PI,REACT,WATCHDOG,CERTS local
+class NETQ decision
+</pre>
+</body>
+</html>

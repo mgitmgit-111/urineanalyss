@@ -1,0 +1,181 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);background:var(--color-background-tertiary);color:var(--color-text-primary)}
+#toolbar{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--color-background-secondary);border-bottom:1px solid var(--color-border-tertiary);flex-wrap:wrap}
+#toolbar button{padding:6px 14px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);cursor:pointer;font-size:13px}
+#toolbar button:hover{background:var(--color-background-secondary)}
+#zoom-label{font-size:13px;color:var(--color-text-secondary);min-width:48px;text-align:center}
+#fit-btn{background:var(--color-background-info)!important;color:var(--color-text-info)!important;border-color:var(--color-border-info)!important}
+#paste-area-wrap{padding:16px;display:flex;flex-direction:column;gap:10px}
+#paste-label{font-size:13px;color:var(--color-text-secondary)}
+#paste-input{width:100%;height:120px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-secondary);background:var(--color-background-primary);color:var(--color-text-primary);padding:10px;font-size:12px;font-family:var(--font-mono);resize:vertical}
+#load-btn{align-self:flex-start;padding:8px 20px;border-radius:var(--border-radius-md);border:none;background:var(--color-background-success);color:var(--color-text-success);font-size:13px;cursor:pointer;font-weight:500}
+#load-btn:hover{opacity:0.85}
+#viewport{overflow:hidden;background:var(--color-background-tertiary);border-top:1px solid var(--color-border-tertiary);cursor:grab;position:relative}
+#viewport.grabbing{cursor:grabbing}
+#canvas{transform-origin:0 0;position:absolute;top:0;left:0}
+#canvas iframe{border:none;display:block;background:#fff}
+#hint{position:absolute;bottom:12px;right:14px;font-size:11px;color:var(--color-text-tertiary);pointer-events:none}
+#empty-state{display:flex;align-items:center;justify-content:center;height:300px;color:var(--color-text-tertiary);font-size:13px}
+</style>
+
+<div id="paste-area-wrap">
+  <div id="paste-label">Paste your HTML below, then click Load</div>
+  <textarea id="paste-input" placeholder="Paste full HTML here..."></textarea>
+  <button id="load-btn" onclick="loadHTML()">Load HTML</button>
+</div>
+
+<div id="toolbar" style="display:none">
+  <button onclick="zoom(-0.15)">− Zoom out</button>
+  <span id="zoom-label">100%</span>
+  <button onclick="zoom(0.15)">+ Zoom in</button>
+  <button id="fit-btn" onclick="fitToView()">Fit to view</button>
+  <button onclick="resetZoom()">100%</button>
+  <button onclick="zoom(0); setScale(2)">200%</button>
+  <button onclick="showPaste()">Paste new HTML</button>
+  <span style="font-size:12px;color:var(--color-text-tertiary);margin-left:4px">Scroll to zoom · Drag to pan</span>
+</div>
+
+<div id="viewport" style="height:0">
+  <div id="canvas">
+    <iframe id="frame" scrolling="no"></iframe>
+  </div>
+  <div id="hint">scroll = zoom · drag = pan</div>
+</div>
+
+<script>
+let scale = 1;
+let tx = 0, ty = 0;
+let dragging = false;
+let lastX, lastY;
+let contentW = 1200, contentH = 800;
+
+const viewport = document.getElementById('viewport');
+const canvas = document.getElementById('canvas');
+const frame = document.getElementById('frame');
+const label = document.getElementById('zoom-label');
+const toolbar = document.getElementById('toolbar');
+const pasteWrap = document.getElementById('paste-area-wrap');
+
+function applyTransform(){
+  canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+  label.textContent = Math.round(scale*100)+'%';
+}
+
+function setScale(s){
+  scale = Math.min(5, Math.max(0.1, s));
+  applyTransform();
+}
+
+function zoom(delta){
+  scale = Math.min(5, Math.max(0.1, scale + delta));
+  applyTransform();
+}
+
+function fitToView(){
+  const vw = viewport.clientWidth;
+  const vh = viewport.clientHeight;
+  const sx = vw / contentW;
+  const sy = vh / contentH;
+  scale = Math.min(sx, sy, 1);
+  tx = (vw - contentW * scale) / 2;
+  ty = (vh - contentH * scale) / 2;
+  applyTransform();
+}
+
+function resetZoom(){
+  scale = 1; tx = 20; ty = 20;
+  applyTransform();
+}
+
+viewport.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 0.1 : -0.1;
+  const rect = viewport.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const prevScale = scale;
+  scale = Math.min(5, Math.max(0.1, scale + delta));
+  tx = mx - (mx - tx) * (scale / prevScale);
+  ty = my - (my - ty) * (scale / prevScale);
+  applyTransform();
+}, {passive:false});
+
+viewport.addEventListener('mousedown', e => {
+  dragging = true;
+  lastX = e.clientX; lastY = e.clientY;
+  viewport.classList.add('grabbing');
+});
+
+window.addEventListener('mousemove', e => {
+  if(!dragging) return;
+  tx += e.clientX - lastX;
+  ty += e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  applyTransform();
+});
+
+window.addEventListener('mouseup', () => {
+  dragging = false;
+  viewport.classList.remove('grabbing');
+});
+
+viewport.addEventListener('touchstart', e => {
+  if(e.touches.length===1){
+    dragging=true;
+    lastX=e.touches[0].clientX;
+    lastY=e.touches[0].clientY;
+  }
+},{passive:true});
+
+viewport.addEventListener('touchmove', e => {
+  if(dragging && e.touches.length===1){
+    tx += e.touches[0].clientX - lastX;
+    ty += e.touches[0].clientY - lastY;
+    lastX=e.touches[0].clientX;
+    lastY=e.touches[0].clientY;
+    applyTransform();
+  }
+},{passive:true});
+
+viewport.addEventListener('touchend',()=>{ dragging=false; });
+
+function loadHTML(){
+  const html = document.getElementById('paste-input').value.trim();
+  if(!html){ alert('Paste some HTML first'); return; }
+
+  frame.srcdoc = html;
+  pasteWrap.style.display = 'none';
+  toolbar.style.display = 'flex';
+  viewport.style.height = (window.innerHeight - toolbar.offsetHeight - 20) + 'px';
+
+  frame.onload = () => {
+    try {
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      const body = doc.body;
+      const html_el = doc.documentElement;
+      contentW = Math.max(body.scrollWidth, html_el.scrollWidth, 800);
+      contentH = Math.max(body.scrollHeight, html_el.scrollHeight, 600);
+    } catch(e){
+      contentW = 1200; contentH = 900;
+    }
+    frame.style.width = contentW + 'px';
+    frame.style.height = contentH + 'px';
+    tx = 20; ty = 20; scale = 1;
+    applyTransform();
+    setTimeout(fitToView, 100);
+  };
+}
+
+function showPaste(){
+  pasteWrap.style.display = 'flex';
+  toolbar.style.display = 'none';
+  viewport.style.height = '0';
+}
+
+window.addEventListener('resize', () => {
+  if(toolbar.style.display !== 'none'){
+    viewport.style.height = (window.innerHeight - toolbar.offsetHeight - 20)+'px';
+  }
+});
+</script>

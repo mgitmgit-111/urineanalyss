@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page-title { font-size: 13px; font-weight: bold; color: #1e293b; padding: 8px 12px 4px; border-bottom: 1.5px solid #334155; margin-bottom: 6px; }
+  .subtitle { font-size: 10px; color: #64748b; font-weight: normal; margin-left: 6px; }
+  #diagram svg { width: 100% !important; height: auto !important; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+<script type="module">
+import mermaid from "https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs";
+await document.fonts.ready;
+mermaid.initialize({ startOnLoad:false, theme:"base", fontFamily:"Arial,sans-serif", themeVariables:{ darkMode:false, fontSize:"12px", fontFamily:"Arial,sans-serif", lineColor:"#73726c", textColor:"#3d3d3a", clusterBkg:"#f8fafc", clusterBorder:"#94a3b8" }, flowchart:{ curve:"basis", padding:20, rankSpacing:52, nodeSpacing:32 } });
+const src = document.getElementById("src").innerText.trim();
+const {svg} = await mermaid.render("r3", src);
+document.getElementById("diagram").innerHTML = svg;
+</script>
+</head>
+<body>
+<div class="page-title">Urine Strip Analyser — Segment 3 of 5 <span class="subtitle">AWS edge layer and FastAPI application tier — ap-south-1 Mumbai</span></div>
+<div id="diagram"></div>
+<pre id="src" style="display:none">
+flowchart TD
+
+subgraph AWS_APP["Segment 3 — AWS edge and FastAPI application tier — ap-south-1 Mumbai"]
+  direction TB
+
+  subgraph FLEET["Device fleet — 2 to 10 Pi devices"]
+    DEV1["Pi — clinic 1\nmTLS cert identity"]
+    DEV2["Pi — clinic 2\nmTLS cert identity"]
+    DEVN["Pi — clinic N\nmTLS cert identity"]
+  end
+
+  subgraph EDGE["AWS edge and networking"]
+    R53["Route 53\napi.domain.com\nlatency routing\nhealth-check failover"]
+    WAF["AWS WAF v2\nOWASP top 10 ruleset\nrate limit 60 req/min per device\nblock malformed payloads"]
+    ALB["Application Load Balancer\nHTTPS 443\nACM certificate\nmTLS — validates client cert per device\nsticky sessions off"]
+    CF["CloudFront\nPDF presigned URL delivery\nedge cache India PoPs\nhides raw S3 URL from patients"]
+  end
+
+  subgraph FARGATE["ECS Fargate — application tier"]
+    FASTAPI["FastAPI app\nuvicorn 4 workers\n1 vCPU 2GB RAM\nauto-scale 2 to 8 tasks on CPU"]
+    subgraph ROUTES["FastAPI route handlers"]
+      R1["POST /v1/reading\nHMAC-SHA256 validate\nstore raw channels\nenqueue ML job\nreturn session_id under 200ms"]
+      R2["POST /v1/patient\nregister patient record\nencrypt PII with Fernet\nstore consent record"]
+      R3["GET /v1/result/session_id\nServer-Sent Events stream\nlong-poll result to Pi UI\npush when ML completes"]
+      R4["POST /v1/consent\nDPDPA 2023 opt-in\nrecord consent version\nrecord timestamp"]
+      R5["GET /health\nALB health probe\nping RDS + Redis\nreturn 200 or 503"]
+    end
+  end
+
+  subgraph ADMIN["Django admin sidecar — ECS Fargate task"]
+    DJ["Django 4.x admin panel\n/admin/ path\ninternal VPC only\nnot exposed via ALB"]
+    DJVIEWS["Device management\nOperator accounts\nLot registration\nResult override audit trail"]
+  end
+
+  subgraph SECRETS["Configuration and secrets"]
+    SM["AWS Secrets Manager\nDB credentials\nHMAC signing key\nWhatsApp API token\nFernet encryption key\nauto-rotate every 30 days"]
+  end
+
+  DEV1 -->|"mTLS POST payload"| ALB
+  DEV2 -->|"mTLS POST payload"| ALB
+  DEVN -->|"mTLS POST payload"| ALB
+  R53 --> WAF --> ALB
+  ALB --> FASTAPI
+  FASTAPI --> R1
+  FASTAPI --> R2
+  FASTAPI --> R3
+  FASTAPI --> R4
+  FASTAPI --> R5
+  CF -->|"presigned URL edge delivery"| DEV1
+  SM -.->|"secrets injected at runtime"| FASTAPI
+  DJ --> DJVIEWS
+end
+
+classDef fleet fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#0c4a6e
+classDef edge fill:#e0e7ff,stroke:#4338ca,stroke-width:1.5px,color:#312e81
+classDef app fill:#fdf4ff,stroke:#9333ea,stroke-width:1.5px,color:#3b0764
+classDef admin fill:#fff7ed,stroke:#c2410c,stroke-width:1px,color:#7c2d12
+classDef sec fill:#fef3c7,stroke:#d97706,stroke-width:1px,color:#78350f
+class DEV1,DEV2,DEVN fleet
+class R53,WAF,ALB,CF edge
+class FASTAPI,R1,R2,R3,R4,R5 app
+class DJ,DJVIEWS admin
+class SM sec
+</pre>
+</body>
+</html>

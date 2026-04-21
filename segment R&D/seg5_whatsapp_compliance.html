@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page-title { font-size: 13px; font-weight: bold; color: #1e293b; padding: 8px 12px 4px; border-bottom: 1.5px solid #334155; margin-bottom: 6px; }
+  .subtitle { font-size: 10px; color: #64748b; font-weight: normal; margin-left: 6px; }
+  #diagram svg { width: 100% !important; height: auto !important; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+<script type="module">
+import mermaid from "https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs";
+await document.fonts.ready;
+mermaid.initialize({ startOnLoad:false, theme:"base", fontFamily:"Arial,sans-serif", themeVariables:{ darkMode:false, fontSize:"12px", fontFamily:"Arial,sans-serif", lineColor:"#73726c", textColor:"#3d3d3a", clusterBkg:"#f8fafc", clusterBorder:"#94a3b8" }, flowchart:{ curve:"basis", padding:20, rankSpacing:52, nodeSpacing:32 } });
+const src = document.getElementById("src").innerText.trim();
+const {svg} = await mermaid.render("r5", src);
+document.getElementById("diagram").innerHTML = svg;
+</script>
+</head>
+<body>
+<div class="page-title">Urine Strip Analyser — Segment 5 of 5 <span class="subtitle">WhatsApp delivery, compliance, CDSCO audit and DPDPA 2023</span></div>
+<div id="diagram"></div>
+<pre id="src" style="display:none">
+flowchart TD
+
+subgraph FINAL["Segment 5 — WhatsApp delivery and compliance layer"]
+  direction TB
+
+  subgraph NOTIF["WhatsApp delivery — Meta Cloud API"]
+    CONSENT_CHK["Check DPDPA consent record\nopt-in confirmed?\nrecorded version + timestamp"]
+    WA_API["WhatsApp Business API\nMeta Cloud API v18\nphone number ID registered\nHSM template — pre-approved by Meta"]
+    WA_MSG["Patient HSM message — 5 fields\n1. Patient name\n2. Plain language result summary\n3. Presigned PDF URL — 24h TTL via CloudFront\n4. Calendly or custom booking link\n5. DPDPA consent footer — required by law"]
+    BOOKING["Followup booking link\nCalendly or custom slot picker\ndoctor availability embedded\nno login required for patient"]
+    PDF_LINK["PDF report\nWeasyPrint generated\npad results table + QR deeplink\nstored S3 WORM 7 years"]
+    RETRY["Retry queue\nx3 attempts\nexponential backoff 30s 90s 270s\ndead-letter on final failure — alert ops"]
+  end
+
+  subgraph OBS["Observability — CloudWatch and X-Ray"]
+    CW["CloudWatch\napp metrics + infra metrics\nerror rate alarm gt 1 percent\nlatency alarm p99 gt 2s"]
+    XRAY["AWS X-Ray tracing\nFastAPI middleware\nend-to-end per-request trace\nper-route p99 latency dashboard"]
+    LOGS["CloudWatch Logs\nstructured JSON logs\n90 day retention\nexport to S3 for CDSCO"]
+  end
+
+  subgraph COMP["Compliance and audit"]
+    AUDIT["Audit table — PostgreSQL\nDB-level trigger enforced\nBEFORE UPDATE OR DELETE — RAISE EXCEPTION\nno application bypass possible\nappend-only INSERT only"]
+    CT["CloudTrail\nall AWS API calls recorded\n90 day retention in S3\ntamper-evident log files"]
+    BACKUP["AWS Backup\nRDS automated daily snapshot\n30 day retention\ncross-region copy for DR"]
+    CDSCO["CDSCO dossier export\nForm MD-3 device registration\nForm MD-14 adverse event report\nSHA-256 signed PDF bundle\ngenerated from audit table + logs"]
+  end
+
+  subgraph DPDPA["India DPDPA 2023 compliance"]
+    PII_ENC["Patient PII encrypted\nFernet symmetric encryption\nfield-level before RDS write\nkey in Secrets Manager"]
+    CONSENT_STORE["Consent records\nopt-in timestamp + version\nopt-out honoured immediately\nright to erasure workflow"]
+    RETENTION["Data retention policy\nmedical records 7 years minimum\nPDF Object Lock WORM\nautomated deletion after expiry"]
+  end
+
+  CONSENT_CHK -->|"consent confirmed"| WA_API
+  CONSENT_CHK -->|"no consent — skip"| RETRY
+  WA_API --> WA_MSG
+  WA_MSG --> PDF_LINK
+  WA_MSG --> BOOKING
+  WA_API -->|"delivery failure"| RETRY
+  RETRY -->|"final failure"| LOGS
+  AUDIT --> CT
+  CT --> BACKUP
+  BACKUP --> CDSCO
+  LOGS --> CW
+  CW --> XRAY
+  AUDIT --> CDSCO
+  PII_ENC --> CONSENT_STORE
+  CONSENT_STORE --> RETENTION
+  RETENTION --> AUDIT
+end
+
+classDef wa fill:#dcfce7,stroke:#15803d,stroke-width:1.5px,color:#14532d
+classDef obs fill:#e0e7ff,stroke:#4338ca,stroke-width:1.5px,color:#312e81
+classDef comp fill:#f1efe8,stroke:#5f5e5a,stroke-width:1.5px,color:#2c2c2a
+classDef dpdpa fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#7f1d1d
+class CONSENT_CHK,WA_API,WA_MSG,BOOKING,PDF_LINK wa
+class RETRY warn
+class CW,XRAY,LOGS obs
+class AUDIT,CT,BACKUP,CDSCO comp
+class PII_ENC,CONSENT_STORE,RETENTION dpdpa
+</pre>
+</body>
+</html>

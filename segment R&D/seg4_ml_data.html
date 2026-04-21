@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page-title { font-size: 13px; font-weight: bold; color: #1e293b; padding: 8px 12px 4px; border-bottom: 1.5px solid #334155; margin-bottom: 6px; }
+  .subtitle { font-size: 10px; color: #64748b; font-weight: normal; margin-left: 6px; }
+  #diagram svg { width: 100% !important; height: auto !important; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+<script type="module">
+import mermaid from "https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs";
+await document.fonts.ready;
+mermaid.initialize({ startOnLoad:false, theme:"base", fontFamily:"Arial,sans-serif", themeVariables:{ darkMode:false, fontSize:"12px", fontFamily:"Arial,sans-serif", lineColor:"#73726c", textColor:"#3d3d3a", clusterBkg:"#f8fafc", clusterBorder:"#94a3b8" }, flowchart:{ curve:"basis", padding:20, rankSpacing:52, nodeSpacing:32 } });
+const src = document.getElementById("src").innerText.trim();
+const {svg} = await mermaid.render("r4", src);
+document.getElementById("diagram").innerHTML = svg;
+</script>
+</head>
+<body>
+<div class="page-title">Urine Strip Analyser — Segment 4 of 5 <span class="subtitle">Async ML inference pipeline and data storage tier</span></div>
+<div id="diagram"></div>
+<pre id="src" style="display:none">
+flowchart TD
+
+subgraph ML_DATA["Segment 4 — Async ML inference and data tier"]
+  direction TB
+
+  subgraph SQS["SQS job queues — decoupled async"]
+    SQS_ML["SQS — ml-jobs queue\nstandard queue\nvisibility timeout 120s\ndead-letter after 3 failures"]
+    SQS_PDF["SQS — pdf-jobs queue\nstandard queue\nvisibility timeout 180s\ntriggered after ML completes"]
+    SQS_NOTIF["SQS — notify-jobs queue\nstandard queue\nvisibility timeout 60s\ntriggered after PDF uploaded"]
+  end
+
+  subgraph CELERY["Celery workers — ECS Fargate"]
+    CEL_ML["ml_analyse worker\n2 vCPU 4GB RAM\n8 RF models loaded at container start\nno per-request model load overhead"]
+    CEL_PDF["pdf_generate worker\nWeasyPrint renderer\npad results table + QR deeplink\nupload PDF to S3"]
+    CEL_NOTIF["notify_dispatch worker\ncheck DPDPA consent record\nformat HSM template fields\nretry x3 exponential backoff"]
+  end
+
+  subgraph MLINF["ML inference pipeline — inside ml_analyse worker"]
+    OOD["OOD detector\nMahalanobis distance\ncompare against training distribution\nreject if distance gt 3 sigma"]
+    CLF["8 x Random Forest classifier\n200 estimators per pad\nURO BIL KET BLD PRO NIT LEU GLU\ninput norm[8 channels] + temp"]
+    CONF{"All pads\nconfidence\ngt 80%?"}
+    PASS["Build AnalysisResult\npad + level + confidence x8\nwrite to RDS\nenqueue PDF job"]
+    FLAG["Flag inconclusive\nconfidence below threshold\nor OOD rejection\noperator notified — repeat strip"]
+  end
+
+  subgraph MLSTORE["Model registry — S3 versioned prefix /models/"]
+    MF["pad_uro.joblib\npad_bil.joblib\npad_ket.joblib\npad_bld.joblib\npad_pro.joblib\npad_nit.joblib\npad_leu.joblib\npad_glu.joblib\nversion tagged — rollback ready"]
+    CF2["calibration.json\nlot reference spectral values\ntemperature correction curves\nper strip lot ID"]
+  end
+
+  subgraph DATA["Data tier — private subnet — no public IP"]
+    RDS["RDS PostgreSQL 15\nMulti-AZ db.t3.medium\nKMS CMK encryption\npoint-in-time recovery 7 days\nReadingSession + RawChannelRecord\nNormalisedRecord + AnalysisResult\nPatient + ConsentRecord + AuditLog"]
+    S3["S3 reports bucket\nAES-256 SSE\nObject Lock WORM 7 years\nversioning enabled\nPDF reports + audit exports"]
+    REDIS["ElastiCache Redis 7\nTLS in-transit\nCelery result backend\nFastAPI response cache\nsession store"]
+  end
+
+  SQS_ML --> CEL_ML
+  SQS_PDF --> CEL_PDF
+  SQS_NOTIF --> CEL_NOTIF
+  CEL_ML --> OOD
+  OOD -->|"in distribution"| CLF
+  OOD -->|"outlier — reject"| FLAG
+  CLF --> CONF
+  CONF -->|"yes — confident"| PASS
+  CONF -->|"no — withhold"| FLAG
+  PASS -->|"write result"| RDS
+  PASS -->|"enqueue"| SQS_PDF
+  CEL_ML --> MF
+  CEL_ML --> CF2
+  CEL_PDF -->|"upload PDF"| S3
+  CEL_PDF -->|"enqueue"| SQS_NOTIF
+  PASS -->|"SSE push result"| REDIS
+  RDS -.->|"read consent"| CEL_NOTIF
+end
+
+classDef sqs fill:#f3e8ff,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764
+classDef cel fill:#ede9fe,stroke:#6d28d9,stroke-width:1.5px,color:#3b0764
+classDef ml fill:#fbeaf0,stroke:#993556,stroke-width:1.5px,color:#4b1528
+classDef store fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+classDef data fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d
+class SQS_ML,SQS_PDF,SQS_NOTIF sqs
+class CEL_ML,CEL_PDF,CEL_NOTIF cel
+class OOD,CLF,CONF,PASS ml
+class MF,CF2 store
+class RDS,S3,REDIS data
+class FLAG warn
+</pre>
+</body>
+</html>

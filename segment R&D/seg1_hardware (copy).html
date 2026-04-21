@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4 landscape; margin: 12mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #fff; }
+  .page-title { font-size: 13px; font-weight: bold; color: #1e293b; padding: 8px 12px 4px; border-bottom: 1.5px solid #334155; margin-bottom: 6px; }
+  .subtitle { font-size: 10px; color: #64748b; font-weight: normal; margin-left: 6px; }
+  #diagram svg { width: 100% !important; height: auto !important; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+<script type="module">
+import mermaid from "https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs";
+await document.fonts.ready;
+mermaid.initialize({ startOnLoad:false, theme:"base", fontFamily:"Arial,sans-serif", themeVariables:{ darkMode:false, fontSize:"12px", fontFamily:"Arial,sans-serif", lineColor:"#73726c", textColor:"#3d3d3a", clusterBkg:"#f8fafc", clusterBorder:"#94a3b8" }, flowchart:{ curve:"basis", padding:20, rankSpacing:55, nodeSpacing:34 } });
+const src = document.getElementById("src").innerText.trim();
+const {svg} = await mermaid.render("r1", src);
+document.getElementById("diagram").innerHTML = svg;
+</script>
+</head>
+<body>
+<div class="page-title">Urine Strip Analyser — Segment 1 of 5 <span class="subtitle">Physical device and optical enclosure</span></div>
+<div id="diagram"></div>
+<pre id="src" style="display:none">
+flowchart TD
+
+subgraph PHY["Segment 1 — Physical device and optical enclosure"]
+  direction TB
+
+  subgraph ENC["Sealed black POM enclosure"]
+    LED["White LED ring\n45deg incidence\n5000K, CRI gt95\nPWM via GPIO18\nnot AS7341 onboard LED"]
+    CRADLE["Strip cradle\n2 hard stops + spring clamp\nlt0.3mm XY repeatability\nno operator handling needed"]
+    PTFE["PTFE white tile\npermanent reference slot\nauto-indexed on strip insert\nnever removed by operator"]
+    AS7341(("AS7341 sensor\n8 optical ch 415–680nm\n+ clear channel\n+ NIR channel\nI2C address 0x39\n400kHz fast mode"))
+    THERM["Thermistor NTC 10k\nread via MCP3008 ADC\nSPI bus CE0\nonboard temp monitoring"]
+    QR["QR barcode scanner\nUSB HID plug and play\nstrip lot ID capture\nbefore each test session"]
+  end
+
+  subgraph GPIO["Raspberry Pi 4B GPIO connections"]
+    GPIO18["GPIO18 PWM\nLED ring brightness control"]
+    SPI0["SPI0 CE0\nMCP3008 ADC\nthermistor read"]
+    I2C1["I2C1 bus\nAS7341 sensor\nSDA GPIO2 SCL GPIO3"]
+    USB["USB port\nQR scanner HID\nauto-detected as keyboard"]
+  end
+
+  LED -->|"illuminates at 45deg"| CRADLE
+  CRADLE -->|"positions strip precisely"| PTFE
+  PTFE -->|"reference and strip surface"| AS7341
+  THERM -->|"voltage divider"| SPI0
+  AS7341 -->|"I2C ADC counts"| I2C1
+  LED -->|"PWM control"| GPIO18
+  QR -->|"USB HID events"| USB
+end
+
+classDef enc fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef gpio fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+class LED,CRADLE,PTFE,AS7341,THERM,QR enc
+class GPIO18,SPI0,I2C1,USB gpio
+</pre>
+</body>
+</html>
