@@ -1,0 +1,91 @@
+<div id="mmd" style="padding:8px 0"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '13px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    primaryColor: dark ? '#1e3a5f' : '#dbeafe',
+    primaryTextColor: dark ? '#bfdbfe' : '#1e3a5f',
+    primaryBorderColor: dark ? '#2563eb' : '#2563eb',
+    secondaryColor: dark ? '#14532d' : '#dcfce7',
+    tertiaryColor: dark ? '#78350f' : '#fef3c7',
+    clusterBkg: dark ? '#1e293b' : '#f8fafc',
+    clusterBorder: dark ? '#475569' : '#94a3b8',
+    edgeLabelBackground: dark ? '#1e293b' : '#f8fafc',
+  },
+  flowchart: { curve: 'basis', padding: 20 }
+});
+
+const diagram = `flowchart TD
+
+subgraph group_hardware["Hardware layer"]
+  node_sensor(("Spectral sensor\\nAS7341 / AS7265x"))
+  node_mcu["MCU / Raspberry Pi\\nreader script\\nsensor_reader.py"]
+end
+
+subgraph group_project["Django project"]
+  node_settings["settings + wsgi\\nconfig + deployment"]
+  node_project_urls["project urls\\nrouter"]
+end
+
+subgraph group_app["strip_analyzer app"]
+  node_ingest["ingest_reading\\nview — views.py"]
+  node_calibration["calibration\\nwhite ref + dark current"]
+  node_analyze["analyze_spectral\\nanalyzer.py"]
+  node_models["SpectralReading\\nmodel — models.py"]
+end
+
+subgraph group_assets["UI assets"]
+  node_template["results.html\\nread-only display"]
+end
+
+subgraph group_data["Local state"]
+  node_db[("db.sqlite3")]
+  node_calib_file["calibration.json\\nreference values"]
+end
+
+node_json["JSON response\\nURO BIL KET BLD PRO NIT LEU GLU SG"]
+node_browser(("Browser client"))
+
+node_sensor -->|"raw channel data 380–1000nm"| node_mcu
+node_mcu -->|"POST spectral JSON"| node_ingest
+node_browser -->|"GET results"| node_settings
+node_browser --> node_template
+node_settings --> node_project_urls
+node_project_urls --> node_ingest
+node_ingest --> node_calibration
+node_calibration -->|"loads ref"| node_calib_file
+node_calibration -->|"normalized values"| node_analyze
+node_analyze --> node_json
+node_json --> node_browser
+node_ingest --> node_models
+node_models --> node_db
+
+classDef toneHardware fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+
+class node_sensor,node_mcu toneHardware
+class node_settings,node_project_urls toneAmber
+class node_ingest,node_analyze,node_calibration,node_models toneMint
+class node_template toneRose
+class node_db,node_calib_file toneIndigo
+class node_browser toneBlue
+class node_json toneNeutral`;
+
+const { svg } = await mermaid.render('mmd-svg', diagram);
+document.getElementById('mmd').innerHTML = svg;
+</script>
