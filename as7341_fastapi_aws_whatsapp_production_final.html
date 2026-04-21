@@ -1,0 +1,235 @@
+<div id="mmd6" style="padding:8px 0;overflow-x:auto"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad:false,
+  theme:'base',
+  fontFamily:'"Anthropic Sans",sans-serif',
+  themeVariables:{
+    darkMode:dark,
+    fontSize:'12px',
+    fontFamily:'"Anthropic Sans",sans-serif',
+    lineColor:dark?'#9c9a92':'#73726c',
+    textColor:dark?'#c2c0b6':'#3d3d3a',
+    clusterBkg:dark?'#1e293b':'#f8fafc',
+    clusterBorder:dark?'#475569':'#94a3b8',
+    edgeLabelBackground:dark?'#1e293b':'#f1efe8',
+  },
+  flowchart:{curve:'basis',padding:20,rankSpacing:52,nodeSpacing:32}
+});
+
+const diagram = `flowchart TD
+
+subgraph PHY["Optical enclosure — sealed black POM unit"]
+  LED["White LED ring\\n45deg incidence, 5000K, CRI gt95\\nPWM via GPIO18 — not AS7341 onboard"]
+  CRADLE["Strip cradle\\n2 hard stops + spring clamp\\nlt0.3mm XY repeatability"]
+  PTFE["PTFE white tile\\npermanent slot — auto-indexed\\nno operator handling"]
+  AS7341(("AS7341\\n8ch 415-680nm\\nclear + NIR\\nI2C 0x39 400kHz"))
+  THERM["Thermistor NTC 10k\\nMCP3008 ADC\\nSPI CE0"]
+  QR["QR barcode scanner\\nUSB HID\\nstrip lot ID read"]
+end
+
+subgraph PI["Raspberry Pi 4B — 4GB RAM — per clinic device"]
+  direction TB
+  subgraph PICAL["sensor_reader.py — systemd service auto-restart"]
+    S1["Step 1 — Dark current\\nLED off, read D[ch x8]"]
+    S2["Step 2 — White tile\\nLED on, read W[ch x8]"]
+    S3["Step 3 — Lot scan\\nQR parse, load lot_ref.json"]
+    S4["Step 4 — Temp read\\nNTC lookup, compute T_factor"]
+    S5["Step 5 — Strip read\\n3x reads, 500ms apart\\naverage R[ch x8]"]
+    S6["Normalise per channel\\n(R-D) / (W-D) x T_factor"]
+    S7["Sign payload\\nHMAC-SHA256\\ndevice_id + ts + nonce"]
+  end
+  subgraph PILOCAL["Local services on Pi"]
+    OFFLINE["aiosqlite offline queue\\nbuffer reads when offline\\nauto-sync on reconnect"]
+    NETQ{"Network\\nreachable?"}
+    LOCALAPI["Local FastAPI\\n127.0.0.1:8001\\nserves cached results"]
+    NGINX_PI["Nginx on Pi\\nserves React build\\nHDMI display — port 3000"]
+    REACT["React + Vite UI\\nHDMI monitor\\noperator workflow\\npatient registration"]
+    WATCHDOG["systemd watchdog\\nhardware WDT via Pi GPIO\\nauto-reboot on hang"]
+    CERTS["Device identity\\n/etc/device/cert.pem\\nper-device mTLS cert\\nrotate every 90d"]
+  end
+end
+
+subgraph FLEET["2-10 device fleet"]
+  DEV1["Pi device — clinic 1"]
+  DEV2["Pi device — clinic 2"]
+  DEVN["Pi device — clinic N"]
+end
+
+subgraph AWS["AWS — ap-south-1 Mumbai region"]
+  direction TB
+  subgraph EDGE["Edge layer"]
+    R53["Route 53\\napi.domain.com\\nlatency routing + health check"]
+    WAF["AWS WAF v2\\nOWASP top 10\\nrate limit 60 req/min per device"]
+    ALB["ALB\\nHTTPS 443 + mTLS\\nACM cert + client cert validation\\nsticky sessions off"]
+  end
+
+  subgraph APP["Application tier — ECS Fargate"]
+    FASTAPI["FastAPI app\\nuvicorn 4 workers\\nFargate 1vCPU 2GB\\nauto-scale 2-8 tasks"]
+    subgraph ROUTES["FastAPI route handlers"]
+      R1["POST /v1/reading\\nHMAC validate\\nstore raw + enqueue ML\\nreturn session_id 200ms"]
+      R2["POST /v1/patient\\nregister patient\\nencrypt PII — Fernet\\nstore consent record"]
+      R3["GET /v1/result/session_id\\nlong-poll result\\nSSE stream to Pi UI"]
+      R4["POST /v1/consent\\nDPDPA opt-in\\nrecord version + timestamp"]
+      R5["GET /health\\nALB health probe\\nDB + Redis ping"]
+    end
+  end
+
+  subgraph ADMIN["Admin sidecar — ECS Fargate task"]
+    DJ["Django 4.x\\nadmin panel only\\n/admin/ path, internal VPC only"]
+    DJVIEWS["Device management\\nOperator accounts\\nLot registration\\nResult override audit"]
+  end
+
+  subgraph QUEUE["Async layer — SQS + Celery"]
+    SQS_ML["SQS — ml-jobs queue\\nstandard, visibility 120s\\ndead-letter after 3 fails"]
+    SQS_NOTIF["SQS — notify-jobs queue\\nstandard, visibility 60s\\ndead-letter after 3 fails"]
+    SQS_PDF["SQS — pdf-jobs queue\\nstandard, visibility 180s"]
+    CEL_ML["Celery ml_analyse worker\\nECS Fargate 2vCPU 4GB\\nload 8 RF models at startup"]
+    CEL_PDF["Celery pdf_generate worker\\nWeasyPrint\\npad table + QR deeplink\\nupload to S3"]
+    CEL_NOTIF["Celery notify_dispatch worker\\ncheck consent record\\nretry x3 exponential backoff"]
+  end
+
+  subgraph ML["ML inference — inside Celery worker"]
+    OOD["OOD detector\\nMahalanobis distance\\nreject if dist gt threshold"]
+    CLF["8x RF classifier\\n200 estimators per pad\\nURO BIL KET BLD\\nPRO NIT LEU GLU"]
+    CONF["Confidence gate\\nall pads need P gt 0.80\\nelse flag inconclusive"]
+    RESULT_BUILD["Build AnalysisResult\\npad + level + confidence x8\\nstore to RDS"]
+  end
+
+  subgraph DATA["Data tier — private subnet, no public IP"]
+    RDS["RDS PostgreSQL 15\\nMulti-AZ db.t3.medium\\nKMS encrypted CMK\\nPITR 7 days"]
+    S3["S3 — reports bucket\\nAES-256 SSE\\nObject Lock WORM 7yr\\nversioning on"]
+    REDIS["ElastiCache Redis 7\\nTLS in-transit\\ncache + Celery result backend"]
+    SM["Secrets Manager\\nDB creds, HMAC keys\\nWA token, Fernet key\\nauto-rotate 30d"]
+  end
+
+  subgraph MODELS["Model registry — S3 versioned prefix"]
+    MF["pad_uro.joblib\\npad_bil.joblib\\npad_ket.joblib\\npad_bld.joblib\\npad_pro.joblib\\npad_nit.joblib\\npad_leu.joblib\\npad_glu.joblib"]
+    CF2["calibration.json\\nlot ref values\\ntemp correction curves\\nper strip lot ID"]
+  end
+end
+
+subgraph WA["WhatsApp delivery — Meta Cloud API"]
+  WA_API["WhatsApp Business API\\nv18 Cloud API\\nphone number ID\\nHSM template — pre-approved"]
+  WA_MSG["Patient message\\nHSM template fields:\\n1 — patient name\\n2 — plain language summary\\n3 — presigned PDF URL 24h TTL\\n4 — Calendly followup booking link\\n5 — DPDPA consent footer"]
+  BOOKING["Followup booking\\nCalendly or custom\\ndoctor slot link\\nembedded in message"]
+end
+
+subgraph OBS["Observability + compliance"]
+  CW["CloudWatch\\napp + infra metrics\\nalarm on error rate gt 1pct"]
+  XRAY["X-Ray tracing\\nFastAPI middleware\\nend-to-end p99 latency"]
+  CT["CloudTrail\\nall AWS API calls\\n90d S3 log retention"]
+  AUDIT["Audit table — PostgreSQL\\nDB-level trigger\\nINSERT only, no UPDATE DELETE\\nappend-only enforced"]
+  BACKUP["AWS Backup\\nRDS daily snapshot\\n30d retention"]
+  CDSCO["CDSCO dossier export\\nForm MD-3 + MD-14\\nsigned PDF bundle\\ngenerated from audit table"]
+end
+
+LED --> CRADLE
+CRADLE --> PTFE
+PTFE --> AS7341
+THERM --> S4
+QR --> S3
+AS7341 -->|"I2C ADC counts"| S1
+S1 --> S2
+S2 --> S3
+S3 --> S4
+S4 --> S5
+S5 --> S6
+S6 --> S7
+S7 --> NETQ
+NETQ -->|"offline"| OFFLINE
+OFFLINE -->|"reconnected — drain queue"| R1
+NETQ -->|"online"| R1
+S7 --> LOCALAPI
+LOCALAPI --> NGINX_PI
+NGINX_PI --> REACT
+WATCHDOG -.->|"monitors"| PICAL
+CERTS -.->|"loaded by"| S7
+
+DEV1 -->|"mTLS POST"| ALB
+DEV2 -->|"mTLS POST"| ALB
+DEVN -->|"mTLS POST"| ALB
+
+R53 --> WAF
+WAF --> ALB
+ALB --> FASTAPI
+FASTAPI --> R1
+FASTAPI --> R2
+FASTAPI --> R3
+FASTAPI --> R4
+FASTAPI --> R5
+
+R1 -->|"raw D W R T"| RDS
+R1 -->|"enqueue"| SQS_ML
+R2 -->|"encrypted PII"| RDS
+R4 -->|"consent record"| RDS
+
+SQS_ML --> CEL_ML
+CEL_ML --> OOD
+OOD -->|"in distribution"| CLF
+OOD -->|"outlier"| RESULT_BUILD
+CLF --> CONF
+CONF -->|"confident"| RESULT_BUILD
+CONF -->|"inconclusive"| RESULT_BUILD
+RESULT_BUILD --> RDS
+RESULT_BUILD -->|"enqueue PDF"| SQS_PDF
+RESULT_BUILD -->|"SSE push"| R3
+
+SQS_PDF --> CEL_PDF
+CEL_PDF --> S3
+S3 -->|"presigned URL 24h"| CEL_NOTIF
+CEL_PDF -->|"enqueue notify"| SQS_NOTIF
+SQS_NOTIF --> CEL_NOTIF
+CEL_NOTIF -->|"check consent"| RDS
+CEL_NOTIF --> WA_API
+WA_API --> WA_MSG
+WA_MSG --> BOOKING
+
+CEL_ML --> MF
+CEL_ML --> CF2
+FASTAPI --> REDIS
+FASTAPI --> SM
+DJ --> RDS
+DJ --> DJVIEWS
+
+RDS --> AUDIT
+AUDIT --> CDSCO
+CW --> CT
+CT --> BACKUP
+FASTAPI -.->|"traces"| XRAY
+XRAY -.-> CW
+
+classDef phy fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef pical fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef pilocal fill:#fefce8,stroke:#ca8a04,stroke-width:1px,color:#713f12
+classDef fleet fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0c4a6e
+classDef edge fill:#e0e7ff,stroke:#4338ca,stroke-width:1.5px,color:#312e81
+classDef app fill:#fdf4ff,stroke:#9333ea,stroke-width:1.5px,color:#3b0764
+classDef queue fill:#f3e8ff,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764
+classDef mlbox fill:#fbeaf0,stroke:#993556,stroke-width:1.5px,color:#4b1528
+classDef data fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef models fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+classDef wa fill:#dcfce7,stroke:#15803d,stroke-width:2px,color:#14532d
+classDef obs fill:#f1efe8,stroke:#5f5e5a,stroke-width:1.5px,color:#2c2c2a
+classDef admin fill:#fff7ed,stroke:#c2410c,stroke-width:1px,color:#7c2d12
+
+class LED,CRADLE,PTFE,AS7341,THERM,QR phy
+class S1,S2,S3,S4,S5,S6,S7 pical
+class OFFLINE,NETQ,LOCALAPI,NGINX_PI,REACT,WATCHDOG,CERTS pilocal
+class DEV1,DEV2,DEVN fleet
+class R53,WAF,ALB edge
+class FASTAPI,R1,R2,R3,R4,R5 app
+class SQS_ML,SQS_NOTIF,SQS_PDF,CEL_ML,CEL_PDF,CEL_NOTIF queue
+class OOD,CLF,CONF,RESULT_BUILD mlbox
+class RDS,S3,REDIS,SM data
+class MF,CF2 models
+class WA_API,WA_MSG,BOOKING wa
+class CW,XRAY,CT,AUDIT,BACKUP,CDSCO obs
+class DJ,DJVIEWS admin`;
+
+const {svg} = await mermaid.render('mmd6-svg', diagram);
+document.getElementById('mmd6').innerHTML = svg;
+</script>
