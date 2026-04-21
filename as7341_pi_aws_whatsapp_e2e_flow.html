@@ -1,0 +1,192 @@
+<div id="mmd4" style="padding:8px 0; overflow-x:auto;"></div>
+<script type="module">
+import mermaid from 'https://esm.sh/mermaid@11/dist/mermaid.esm.min.mjs';
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+await document.fonts.ready;
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'base',
+  fontFamily: '"Anthropic Sans", sans-serif',
+  themeVariables: {
+    darkMode: dark,
+    fontSize: '12px',
+    fontFamily: '"Anthropic Sans", sans-serif',
+    lineColor: dark ? '#9c9a92' : '#73726c',
+    textColor: dark ? '#c2c0b6' : '#3d3d3a',
+    clusterBkg: dark ? '#1e293b' : '#f8fafc',
+    clusterBorder: dark ? '#475569' : '#94a3b8',
+    edgeLabelBackground: dark ? '#1e293b' : '#f1efe8',
+  },
+  flowchart: { curve: 'basis', padding: 16, rankSpacing: 60, nodeSpacing: 40 }
+});
+
+const diagram = `flowchart TD
+
+subgraph PHY["Physical device — optical enclosure"]
+  direction TB
+  LED["External white LED ring\\n45deg incidence, CRI gt95\\n5000K, PWM brightness control"]
+  CRADLE["Strip cradle\\n2 hard stops + spring clamp\\nlt0.3mm XY repeatability"]
+  PTFE["PTFE white tile\\npermanent reference slot\\nauto-indexed on strip insert"]
+  AS7341(("AS7341\\n8 optical ch 415–680nm\\n+ clear + NIR\\nI2C addr 0x39"))
+  THERM["Thermistor NTC\\nADC via MCP3008\\nSPI bus"]
+  BARCODE["QR / barcode scanner\\nUSB HID\\nstrip lot scan"]
+end
+
+subgraph PI["Raspberry Pi 4 — embedded controller"]
+  direction TB
+  subgraph FW["sensor_reader.py — systemd service"]
+    CAL_DARK["Step 1: dark current\\nLED off — read D[ch x8]"]
+    CAL_WHITE["Step 2: white tile\\nLED on — read W[ch x8]"]
+    CAL_LOT["Step 3: lot scan\\nparse barcode → load lot_ref.json"]
+    CAL_TEMP["Step 4: temp read\\napply NTC correction curve"]
+    READ_STRIP["Step 5: strip read\\nLED on — read R[ch x8]\\n3 reads averaged"]
+    NORM["Normalise\\n(R−D)/(W−D) × temp_factor\\nper channel"]
+    PAYLOAD["Build JSON payload\\nraw + normalised + meta\\noperator_id + lot + serial + ts"]
+  end
+  subgraph PILOCAL["Local Pi services"]
+    SQLITE_LOCAL["SQLite local cache\\nqueue if offline"]
+    DISPLAY_SVC["Display service\\nDjango local @ 127.0.0.1:8000\\ngunicorn + systemd"]
+    TOUCHUI["7-inch Pi touchscreen\\nresults.html\\noperator UI"]
+    NETCHECK{"Network\\nreachable?"}
+  end
+end
+
+subgraph AWS["AWS cloud — production backend"]
+  direction TB
+  subgraph NET["Networking"]
+    ALB["Application Load Balancer\\nHTTPS 443 + SSL termination\\nACM certificate"]
+    SG_FW["Security Group\\n443 inbound only\\nVPC private subnets"]
+  end
+  subgraph APP["Application tier — EC2 t3.medium"]
+    GUNICORN["Gunicorn\\n4 workers\\nDjango 4.x"]
+    subgraph DJANGO["Django application"]
+      INGEST_VIEW["ingest_reading view\\nPOST /api/v1/reading/\\nHMAC-SHA256 auth"]
+      SESSION_MODEL["ReadingSession model\\noperator+lot+sensor+ts+sw_version"]
+      RAW_MODEL["RawChannelRecord model\\nD[8] W[8] R[8] T — immutable\\nnever updated, never deleted"]
+      NORM_MODEL["NormalisedRecord model\\nnormalised[8] + temp_factor"]
+      ML_VIEW["ML analysis view\\nPOST /api/v1/analyse/"]
+      RESULT_MODEL["AnalysisResult model\\npad+level+confidence × 8 pads"]
+      AUDIT_MODEL["AuditLog model\\nuser+action+ts+record_id\\nappend-only"]
+      NOTIFY_VIEW["Notification trigger\\nPOST /api/v1/notify/"]
+      PATIENT_MODEL["Patient model\\nname+phone+doctor_phone\\nencrypted PII fields"]
+      REPORT_GEN["PDF report generator\\nWeasyPrint\\nheader+pad table+QR deeplink"]
+    end
+  end
+  subgraph DATA["Data tier"]
+    RDS["RDS PostgreSQL 15\\nMulti-AZ\\nencrypted at rest — KMS"]
+    S3["S3 bucket\\nPDF reports + audit exports\\nSSE-S3 + versioning"]
+    REDIS["ElastiCache Redis\\nDjango cache + Celery broker"]
+  end
+  subgraph ASYNC["Async workers — Celery"]
+    CELERY["Celery worker\\nEC2 t3.small"]
+    ML_TASK["ml_analyse task\\n8 × RF classifier\\njoblib loaded models\\nOOD Mahalanobis check"]
+    NOTIFY_TASK["notify_dispatch task\\nretry queue x3\\nexponential backoff"]
+    PDF_TASK["pdf_generate task\\nrender + upload to S3\\npresigned URL 24h TTL"]
+  end
+end
+
+subgraph ML_STORE["Model registry — S3"]
+  MODEL_FILES["pad_uro.joblib … pad_glu.joblib\\n8 RF models\\nversion tagged"]
+  CALIB_FILES["calibration.json\\nper lot reference values\\ntemperature curves"]
+end
+
+subgraph WHATSAPP["WhatsApp delivery"]
+  WA_API["WhatsApp Business API\\nMeta Cloud API\\nHSM template messages"]
+  WA_DOC["Doctor message\\npad results table\\npresigned PDF link\\nclinical language"]
+  WA_PAT["Patient message\\nplain language summary\\npresigned PDF link\\nfollowup CTA"]
+end
+
+subgraph COMPLIANCE["Compliance + monitoring"]
+  CLOUDWATCH["CloudWatch\\napp logs + metrics\\nalerts on error rate"]
+  CLOUDTRAIL["CloudTrail\\nAPI audit — all AWS calls"]
+  BACKUP["AWS Backup\\nRDS daily snapshot\\n30 day retention"]
+  CDSCO_EXPORT["CDSCO audit export\\nsigned PDF bundle\\nForm MD-14 adverse event"]
+end
+
+LED --> CRADLE
+CRADLE --> PTFE
+PTFE --> AS7341
+THERM --> CAL_TEMP
+BARCODE --> CAL_LOT
+AS7341 -->|"I2C ADC counts"| CAL_DARK
+CAL_DARK --> CAL_WHITE
+CAL_WHITE --> CAL_LOT
+CAL_LOT --> CAL_TEMP
+CAL_TEMP --> READ_STRIP
+READ_STRIP --> NORM
+NORM --> PAYLOAD
+PAYLOAD --> NETCHECK
+NETCHECK -->|"online"| INGEST_VIEW
+NETCHECK -->|"offline"| SQLITE_LOCAL
+SQLITE_LOCAL -->|"retry when online"| INGEST_VIEW
+PAYLOAD --> DISPLAY_SVC
+DISPLAY_SVC --> TOUCHUI
+
+INGEST_VIEW --> ALB
+ALB --> SG_FW
+SG_FW --> GUNICORN
+GUNICORN --> INGEST_VIEW
+INGEST_VIEW --> SESSION_MODEL
+INGEST_VIEW --> RAW_MODEL
+INGEST_VIEW --> NORM_MODEL
+SESSION_MODEL --> RDS
+RAW_MODEL --> RDS
+NORM_MODEL --> RDS
+INGEST_VIEW -->|"enqueue"| REDIS
+REDIS --> CELERY
+CELERY --> ML_TASK
+ML_TASK --> MODEL_FILES
+ML_TASK --> CALIB_FILES
+ML_TASK --> RESULT_MODEL
+RESULT_MODEL --> RDS
+ML_TASK --> ML_VIEW
+ML_VIEW --> RESULT_MODEL
+
+RESULT_MODEL -->|"trigger"| NOTIFY_VIEW
+NOTIFY_VIEW -->|"enqueue"| REDIS
+REDIS --> NOTIFY_TASK
+NOTIFY_TASK --> PDF_TASK
+PDF_TASK --> REPORT_GEN
+REPORT_GEN --> S3
+S3 -->|"presigned URL"| NOTIFY_TASK
+NOTIFY_TASK --> WA_API
+WA_API --> WA_DOC
+WA_API --> WA_PAT
+
+RAW_MODEL --> AUDIT_MODEL
+SESSION_MODEL --> AUDIT_MODEL
+RESULT_MODEL --> AUDIT_MODEL
+AUDIT_MODEL --> RDS
+AUDIT_MODEL --> CLOUDWATCH
+CLOUDWATCH --> CLOUDTRAIL
+CLOUDTRAIL --> BACKUP
+BACKUP --> CDSCO_EXPORT
+
+classDef phy fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef pifw fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef pilocal fill:#fef9ee,stroke:#b45309,stroke-width:1px,color:#78350f
+classDef net fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef app fill:#fbeaf0,stroke:#993556,stroke-width:1.5px,color:#4b1528
+classDef data fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef async fill:#f3e8ff,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764
+classDef wa fill:#dcfce7,stroke:#15803d,stroke-width:1.5px,color:#14532d
+classDef comp fill:#f1efe8,stroke:#5f5e5a,stroke-width:1.5px,color:#2c2c2a
+classDef warn fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d
+classDef model fill:#ede9fe,stroke:#6d28d9,stroke-width:1px,color:#3b0764
+classDef mlstore fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+
+class LED,CRADLE,PTFE,AS7341,THERM,BARCODE phy
+class CAL_DARK,CAL_WHITE,CAL_LOT,CAL_TEMP,READ_STRIP,NORM,PAYLOAD pifw
+class SQLITE_LOCAL,DISPLAY_SVC,TOUCHUI,NETCHECK pilocal
+class ALB,SG_FW net
+class GUNICORN,INGEST_VIEW,ML_VIEW,NOTIFY_VIEW,REPORT_GEN app
+class SESSION_MODEL,RAW_MODEL,NORM_MODEL,RESULT_MODEL,AUDIT_MODEL,PATIENT_MODEL model
+class RDS,S3,REDIS data
+class CELERY,ML_TASK,NOTIFY_TASK,PDF_TASK async
+class WA_API,WA_DOC,WA_PAT wa
+class CLOUDWATCH,CLOUDTRAIL,BACKUP,CDSCO_EXPORT comp
+class MODEL_FILES,CALIB_FILES mlstore`;
+
+const { svg } = await mermaid.render('mmd4-svg', diagram);
+document.getElementById('mmd4').innerHTML = svg;
+</script>
